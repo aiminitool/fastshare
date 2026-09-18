@@ -1,0 +1,4 @@
+bin/
+obj/
+publish-win/
+publish-linux/

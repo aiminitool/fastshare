@@ -1,0 +1,53 @@
+name: Build FileServer
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:   # cho phép bấm nút "Run workflow" thủ công trên GitHub
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish win-x64 (single file)
+        run: >
+          dotnet publish -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -o publish-win
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileServer-windows
+          path: publish-win/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish linux-x64 (single file)
+        run: >
+          dotnet publish -c Release -r linux-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -o publish-linux
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileServer-linux
+          path: publish-linux/
