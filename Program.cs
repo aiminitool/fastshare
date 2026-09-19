@@ -1,7 +1,12 @@
+using System.Diagnostics;
 using System.Net;
+using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace FileServer;
 
@@ -11,6 +16,12 @@ internal class AppConfig
     public string Password { get; set; } = "matkhau_cua_ban";
     public string SafeDir { get; set; } = "C:/backup/files";
     public int Port { get; set; } = 96;
+
+    // Tu dong mo cong tren firewall khi khoi dong (can quyen Administrator/root)
+    public bool AutoOpenFirewall { get; set; } = true;
+
+    // Tu dong do IP LAN va Public de hien thi link truy cap
+    public bool ShowNetworkInfo { get; set; } = true;
 }
 
 internal static class Program
@@ -21,9 +32,18 @@ internal static class Program
     {
         LoadConfig();
 
+        // Mac dinh .NET ThreadPool chi tao them ~1 thread moi 500ms khi vuot qua
+        // so luong toi thieu, gay nghen khi co nhieu ket noi dong thoi (vi du IDM
+        // mo 8-16 luong tai song song). Tang so luong toi thieu ngay tu dau.
+        ThreadPool.SetMinThreads(64, 64);
+
         var listener = new HttpListener();
-        // "+" nghĩa là lắng nghe trên mọi địa chỉ IP của máy
         listener.Prefixes.Add($"http://+:{_cfg.Port}/");
+
+        if (_cfg.AutoOpenFirewall)
+        {
+            TryOpenFirewall(_cfg.Port);
+        }
 
         try
         {
@@ -40,6 +60,12 @@ internal static class Program
 
         Console.WriteLine("File server dang chay tai cong " + _cfg.Port);
         Console.WriteLine("Thu muc chia se: " + _cfg.SafeDir);
+
+        if (_cfg.ShowNetworkInfo)
+        {
+            await PrintAccessLinks(_cfg.Port);
+        }
+
         Console.WriteLine("Nhan Ctrl+C de dung.");
 
         while (true)
@@ -64,6 +90,190 @@ internal static class Program
             Console.WriteLine("Khong tim thay appsettings.json, dung cau hinh mac dinh.");
         }
     }
+
+    // ==================== FIREWALL ====================
+
+    private static void TryOpenFirewall(int port)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                OpenFirewallWindows(port);
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                OpenFirewallLinux(port);
+            }
+            else
+            {
+                Console.WriteLine("He dieu hanh nay chua ho tro tu dong mo firewall.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Khong the tu dong mo firewall: " + ex.Message);
+        }
+    }
+
+    private static void OpenFirewallWindows(int port)
+    {
+        string ruleName = $"FileServer_{port}";
+
+        // Xoa rule cu neu co, tranh tao trung lap moi lan khoi dong (bo qua loi neu chua ton tai)
+        RunProcess("netsh", $"advfirewall firewall delete rule name=\"{ruleName}\"", ignoreErrors: true);
+
+        int code = RunProcess("netsh",
+            $"advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow protocol=TCP localport={port}",
+            ignoreErrors: true);
+
+        if (code == 0)
+        {
+            Console.WriteLine($"Da tu dong mo cong {port} tren Windows Firewall.");
+        }
+        else
+        {
+            Console.WriteLine($"Khong the tu mo Windows Firewall (can chay chuong trinh voi quyen Administrator).");
+            Console.WriteLine($"Ban co the tu chay lenh sau trong CMD (Administrator):");
+            Console.WriteLine($"  netsh advfirewall firewall add rule name=\"{ruleName}\" dir=in action=allow protocol=TCP localport={port}");
+        }
+    }
+
+    private static void OpenFirewallLinux(int port)
+    {
+        int checkCode = RunProcess("which", "ufw", ignoreErrors: true, silent: true);
+        if (checkCode != 0)
+        {
+            Console.WriteLine($"Khong tim thay ufw tren he thong, bo qua buoc tu dong mo firewall.");
+            Console.WriteLine($"Neu can, tu mo cong bang lenh phu hop voi firewall dang dung, vi du:");
+            Console.WriteLine($"  sudo ufw allow {port}/tcp");
+            return;
+        }
+
+        int code = RunProcess("ufw", $"allow {port}/tcp", ignoreErrors: true);
+        if (code == 0)
+        {
+            Console.WriteLine($"Da tu dong mo cong {port} tren ufw.");
+        }
+        else
+        {
+            Console.WriteLine($"Khong the tu mo ufw (co the can chay chuong trinh bang sudo).");
+            Console.WriteLine($"Ban co the tu chay lenh: sudo ufw allow {port}/tcp");
+        }
+    }
+
+    private static int RunProcess(string fileName, string arguments, bool ignoreErrors = false, bool silent = false)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(fileName, arguments)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = Process.Start(psi);
+            process!.WaitForExit();
+            return process.ExitCode;
+        }
+        catch
+        {
+            if (ignoreErrors) return -1;
+            throw;
+        }
+    }
+
+    // ==================== THONG TIN MANG (IP LAN / PUBLIC) ====================
+
+    private static async Task PrintAccessLinks(int port)
+    {
+        Console.WriteLine();
+        Console.WriteLine("==== DIA CHI TRUY CAP ====");
+
+        var lanIPs = GetLanIPv4Addresses();
+        if (lanIPs.Count > 0)
+        {
+            Console.WriteLine("Trong mang LAN (dung khi may tai cung mang noi bo/wifi):");
+            foreach (var ip in lanIPs)
+            {
+                Console.WriteLine($"  http://{ip}:{port}/");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Khong tim thay dia chi IP LAN nao (kiem tra lai ket noi mang).");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Dang do IP cong khai (Public IP), vui long doi vai giay...");
+        string? publicIP = await GetPublicIPAsync();
+        if (publicIP != null)
+        {
+            Console.WriteLine("Tu Internet ben ngoai (can mo/forward dung port tren router neu may");
+            Console.WriteLine("nay dang o sau NAT/router, khong phai IP cong khai truc tiep):");
+            Console.WriteLine($"  http://{publicIP}:{port}/");
+        }
+        else
+        {
+            Console.WriteLine("Khong lay duoc Public IP (may co the khong co Internet hoac bi chan truy cap ra ngoai).");
+        }
+
+        Console.WriteLine("===========================");
+        Console.WriteLine();
+    }
+
+    private static List<string> GetLanIPv4Addresses()
+    {
+        var result = new List<string>();
+
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+
+            var ipProps = ni.GetIPProperties();
+            foreach (var addr in ipProps.UnicastAddresses)
+            {
+                if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    result.Add(addr.Address.ToString());
+                }
+            }
+        }
+
+        return result.Distinct().ToList();
+    }
+
+    private static async Task<string?> GetPublicIPAsync()
+    {
+        string[] services =
+        {
+            "https://api.ipify.org",
+            "https://icanhazip.com",
+            "https://ifconfig.me/ip"
+        };
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
+
+        foreach (var url in services)
+        {
+            try
+            {
+                string result = await http.GetStringAsync(url);
+                result = result.Trim();
+                if (!string.IsNullOrEmpty(result)) return result;
+            }
+            catch
+            {
+                // Thu dich vu tiep theo
+            }
+        }
+
+        return null;
+    }
+
+    // ==================== XU LY REQUEST ====================
 
     private static async Task HandleRequestSafe(HttpListenerContext context)
     {
@@ -208,7 +418,6 @@ internal static class Program
     // ==== TAI FILE HO TRO RANGE / RESUME ====
     private static async Task ServeFileWithRange(HttpListenerRequest request, HttpListenerResponse response, string requestedName)
     {
-        // Chi lay ten file, chong path traversal (../../)
         string safeName = Path.GetFileName(requestedName);
         string filePath = Path.Combine(_cfg.SafeDir, safeName);
 
@@ -257,12 +466,18 @@ internal static class Program
             response.StatusCode = 200;
         }
 
-        const int bufferSize = 1024 * 1024; // 1MB moi lan doc
+        const int bufferSize = 4 * 1024 * 1024; // 4MB moi lan doc, giam so lan goi he thong
         byte[] buffer = new byte[bufferSize];
 
         try
         {
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var fs = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: bufferSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
             fs.Seek(start, SeekOrigin.Begin);
 
             long remaining = length;
