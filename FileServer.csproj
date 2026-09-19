@@ -8,16 +8,21 @@
     <AssemblyName>FileServer</AssemblyName>
     <RootNamespace>FileServer</RootNamespace>
 
-    <!-- Cho phép publish self-contained, gộp thành 1 file duy nhất -->
+    <!-- Self-contained: khong can cai .NET runtime tren may chay.
+         KHONG dung PublishSingleFile (kieu "tu giai nen" 1 file exe) vi kieu
+         nay hay bi mot so antivirus/Windows Defender nghi ngo do hanh vi giong
+         "self-extracting". Publish ra 1 thu muc nhieu file (exe + cac .dll)
+         se it bi flag hon nhieu, du phai copy ca thu muc thay vi 1 file. -->
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>
     <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="start.bat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

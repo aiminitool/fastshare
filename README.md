@@ -1,9 +1,35 @@
 # FileServer — chương trình chia sẻ file nhẹ, có mật khẩu, hỗ trợ resume
 
 Chương trình console C# (.NET 8), không phụ thuộc framework nặng (không dùng
-ASP.NET Core), chỉ dùng `HttpListener` có sẵn trong .NET. Publish ra được
-**1 file .exe / file binary duy nhất**, không cần cài .NET runtime trên máy
-chạy (self-contained).
+ASP.NET Core), chỉ dùng `HttpListener` có sẵn trong .NET. Publish ra
+**self-contained** (không cần cài .NET runtime trên máy chạy) dưới dạng
+**1 thư mục gồm file `.exe`/binary chạy được kèm vài file `.dll`**.
+
+> Trước đây bản này gộp thành 1 file `.exe` duy nhất ("tự giải nén" khi
+> chạy), nhưng kiểu đóng gói đó hay bị Windows Defender/antivirus nghi ngờ
+> nhầm là mã độc. Bản hiện tại đóng gói thành thư mục nhiều file bình
+> thường, ít bị chặn nhầm hơn hẳn — chỉ cần nhớ **copy cả thư mục**, không
+> tách riêng file `.exe` ra dùng một mình.
+
+**Tính năng:**
+- Đăng nhập bằng mật khẩu (HTTP Basic Auth, tương thích IDM).
+- Liệt kê và tải file, hỗ trợ Range/resume/đa luồng (nhanh với IDM).
+- **Giao diện quản trị ngay trên trình duyệt** (cùng địa chỉ, cùng mật khẩu
+  đăng nhập), gồm 3 tab:
+  - *Danh sách file*: xem và tải file như bình thường.
+  - *Đường dẫn truy cập*: liệt kê sẵn mọi IP LAN + IP Public kèm cổng,
+    có nút **Copy** để lấy link ngay, không cần tự tra IP thủ công.
+  - *Cài đặt*: sửa Username, Password, thư mục chia sẻ, cổng, và các tùy
+    chọn khác ngay trên web — không cần mở tay file `appsettings.json`.
+    Có nút **Khởi động lại ngay** để áp dụng thay đổi mà không cần vào
+    lại máy chủ.
+- **Tự động mở cổng trên firewall** khi khởi động (Windows Firewall /
+  ufw trên Ubuntu) — cần chạy với quyền Administrator/root.
+- **Không tự đóng cửa sổ khi gặp lỗi**: nếu khởi động thất bại (ví dụ cổng
+  bị chiếm), chương trình in rõ nguyên nhân và chờ bạn nhấn phím trước khi
+  thoát.
+- Kèm sẵn `start.bat` (trên Windows) để chạy tiện hơn, giữ cửa sổ luôn mở
+  lại sau khi chương trình dừng, dù thành công hay lỗi.
 
 ## 1. Cài công cụ build (chỉ làm 1 lần, trên máy dùng để build)
 
@@ -23,11 +49,20 @@ Mở file `appsettings.json`, sửa lại:
   "Username": "admin",
   "Password": "matkhau_cua_ban",
   "SafeDir": "C:/backup/files",
-  "Port": 96
+  "Port": 96,
+  "AutoOpenFirewall": true,
+  "ShowNetworkInfo": true
 }
 ```
 - `SafeDir`: trên Windows dùng kiểu `C:/backup/files`, trên Ubuntu dùng kiểu
   `/backup/files`.
+- `AutoOpenFirewall`: `true` để chương trình tự động mở cổng trên firewall
+  mỗi khi khởi động (cần chạy với quyền Administrator trên Windows, hoặc
+  root/sudo trên Ubuntu để lệnh này thành công — nếu không đủ quyền,
+  chương trình vẫn chạy bình thường, chỉ in ra lệnh để bạn tự chạy thủ công).
+  Đặt `false` nếu bạn muốn tự quản lý firewall.
+- `ShowNetworkInfo`: `true` để khi khởi động, chương trình tự liệt kê các
+  link truy cập (IP LAN và IP Public kèm cổng) ngay trên màn hình console.
 - File `appsettings.json` phải luôn nằm **cùng thư mục** với file chạy
   (exe/binary) sau khi publish — không nhúng được vào trong file exe.
 
@@ -161,6 +196,23 @@ kết quả về.
 
 Nếu muốn build lại thủ công bất cứ lúc nào (không cần push code mới): vào
 tab **Actions** → chọn workflow "Build FileServer" → bấm **Run workflow**.
+
+## Giao diện quản trị trên trình duyệt
+
+Truy cập `http://<ip-server>:<port>/` bằng trình duyệt, đăng nhập bằng
+đúng Username/Password đã cấu hình. Trang sẽ hiện 3 tab:
+
+- **Danh sách file** — xem và tải file, giống như trước.
+- **Đường dẫn truy cập** — copy nhanh link LAN/Public kèm sẵn cổng, để
+  gửi cho người khác hoặc dán vào IDM.
+- **Cài đặt** — sửa trực tiếp Username, Password, thư mục chia sẻ, cổng,
+  và các tùy chọn khác. Sau khi bấm **Luu cai dat**, bấm tiếp
+  **Khoi dong lai ngay** để chương trình tự khởi động lại và áp dụng thay
+  đổi (không cần vào tận máy chủ để tắt/bật lại thủ công).
+
+> Lưu ý: nếu đổi Port trong tab Cài đặt, sau khi khởi động lại bạn cần
+> truy cập lại bằng **cổng mới**. Nếu đổi Username/Password, lần truy cập
+> tiếp theo trình duyệt sẽ hỏi đăng nhập lại với thông tin mới.
 
 ## Lưu ý bảo mật
 
